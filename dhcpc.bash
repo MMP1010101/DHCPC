@@ -73,13 +73,60 @@ if [ -f "$NETPLAN_FILE" ]; then
     echo -e "${GREEN}Backup creado: $BACKUP_FILE${NC}"
 fi
 
-# Crear la nueva configuración
-cat > "$NETPLAN_FILE" << EOF
+# Leer la configuración actual y agregar solo enp3s0
+if [ -f "$NETPLAN_FILE" ]; then
+    # Crear el archivo temporal con la configuración modificada
+    awk -v ip="$IP_ADDRESS" -v gw="$GATEWAY" '
+    BEGIN { in_ethernets=0; printed_enp3s0=0 }
+    /^network:/ { print; next }
+    /^  ethernets:/ { print; in_ethernets=1; next }
+    /^  version:/ { 
+        if (!printed_enp3s0 && in_ethernets) {
+            print "    enp3s0:"
+            print "      dhcp4: no"
+            print "      addresses:"
+            print "        - " ip
+            print "      routes:"
+            print "        - to: default"
+            print "          via: " gw
+            print "      nameservers:"
+            print "        addresses:"
+            print "          - 8.8.8.8"
+            print "          - 8.8.4.4"
+            printed_enp3s0=1
+        }
+        print
+        next
+    }
+    /^    enp3s0:/ { 
+        # Saltar la configuración antigua de enp3s0 si existe
+        print "    enp3s0:"
+        print "      dhcp4: no"
+        print "      addresses:"
+        print "        - " ip
+        print "      routes:"
+        print "        - to: default"
+        print "          via: " gw
+        print "      nameservers:"
+        print "        addresses:"
+        print "          - 8.8.8.8"
+        print "          - 8.8.4.4"
+        printed_enp3s0=1
+        # Saltar líneas hasta la siguiente interfaz o section
+        while (getline > 0 && $0 ~ /^      /) { }
+        if ($0 !~ /^$/) print
+        next
+    }
+    { print }
+    ' "$NETPLAN_FILE" > "${NETPLAN_FILE}.tmp"
+    
+    mv "${NETPLAN_FILE}.tmp" "$NETPLAN_FILE"
+else
+    # Si no existe el archivo, crear uno nuevo solo con enp3s0
+    cat > "$NETPLAN_FILE" << EOF
 # This is the network config written by 'subiquity'
 network:
   ethernets:
-    enp1s0:
-      dhcp4: true
     enp3s0:
       dhcp4: no
       addresses:
@@ -93,6 +140,7 @@ network:
           - 8.8.4.4
   version: 2
 EOF
+fi
 
 echo -e "${GREEN}Archivo netplan actualizado${NC}"
 echo ""
