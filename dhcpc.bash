@@ -46,13 +46,10 @@ done
 
 # Construir la IP
 IP_ADDRESS="172.16.160.$HOST_NUM/24"
-GATEWAY="172.16.160.1"
 
 echo ""
 echo -e "${GREEN}Configuración seleccionada:${NC}"
 echo "  IP: $IP_ADDRESS"
-echo "  Gateway: $GATEWAY"
-echo "  DNS: 8.8.8.8, 8.8.4.4"
 echo ""
 
 # Solicitar confirmación
@@ -63,84 +60,13 @@ if [[ ! "$CONFIRM" =~ ^[sS]$ ]]; then
     exit 0
 fi
 
-# Ruta del archivo netplan (ajustar según tu sistema)
 NETPLAN_FILE="/etc/netplan/00-installer-config.yaml"
 
-# Crear backup del archivo actual si existe
-if [ -f "$NETPLAN_FILE" ]; then
-    BACKUP_FILE="${NETPLAN_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
-    cp "$NETPLAN_FILE" "$BACKUP_FILE"
-    echo -e "${GREEN}Backup creado: $BACKUP_FILE${NC}"
-fi
+# Hacer backup
+cp "$NETPLAN_FILE" "${NETPLAN_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
 
-# Leer la configuración actual y agregar solo enp3s0
-if [ -f "$NETPLAN_FILE" ]; then
-    # Crear el archivo temporal con la configuración modificada
-    awk -v ip="$IP_ADDRESS" -v gw="$GATEWAY" '
-    BEGIN { in_ethernets=0; printed_enp3s0=0 }
-    /^network:/ { print; next }
-    /^  ethernets:/ { print; in_ethernets=1; next }
-    /^  version:/ { 
-        if (!printed_enp3s0 && in_ethernets) {
-            print "    enp3s0:"
-            print "      dhcp4: no"
-            print "      addresses:"
-            print "        - " ip
-            print "      routes:"
-            print "        - to: default"
-            print "          via: " gw
-            print "      nameservers:"
-            print "        addresses:"
-            print "          - 8.8.8.8"
-            print "          - 8.8.4.4"
-            printed_enp3s0=1
-        }
-        print
-        next
-    }
-    /^    enp3s0:/ { 
-        # Saltar la configuración antigua de enp3s0 si existe
-        print "    enp3s0:"
-        print "      dhcp4: no"
-        print "      addresses:"
-        print "        - " ip
-        print "      routes:"
-        print "        - to: default"
-        print "          via: " gw
-        print "      nameservers:"
-        print "        addresses:"
-        print "          - 8.8.8.8"
-        print "          - 8.8.4.4"
-        printed_enp3s0=1
-        # Saltar líneas hasta la siguiente interfaz o section
-        while (getline > 0 && $0 ~ /^      /) { }
-        if ($0 !~ /^$/) print
-        next
-    }
-    { print }
-    ' "$NETPLAN_FILE" > "${NETPLAN_FILE}.tmp"
-    
-    mv "${NETPLAN_FILE}.tmp" "$NETPLAN_FILE"
-else
-    # Si no existe el archivo, crear uno nuevo solo con enp3s0
-    cat > "$NETPLAN_FILE" << EOF
-# This is the network config written by 'subiquity'
-network:
-  ethernets:
-    enp3s0:
-      dhcp4: no
-      addresses:
-        - $IP_ADDRESS
-      routes:
-        - to: default
-          via: $GATEWAY
-      nameservers:
-        addresses:
-          - 8.8.8.8
-          - 8.8.4.4
-  version: 2
-EOF
-fi
+# Insertar enp3s0 antes de "version: 2", sin tocar nada más
+sed -i "/^  version:/i\\    enp3s0:\n      dhcp4: no\n      addresses:\n        - $IP_ADDRESS" "$NETPLAN_FILE"
 
 echo -e "${GREEN}Archivo netplan actualizado${NC}"
 echo ""
@@ -155,15 +81,8 @@ if [ $? -eq 0 ]; then
     echo "Información de la interfaz enp3s0:"
     ip addr show enp3s0 | grep "inet "
     echo ""
-    echo "Prueba de conectividad:"
-    ping -c 3 $GATEWAY
 else
     echo -e "${RED}Error al aplicar la configuración${NC}"
-    echo "Restaurando backup..."
-    if [ -f "$BACKUP_FILE" ]; then
-        cp "$BACKUP_FILE" "$NETPLAN_FILE"
-        netplan apply
-    fi
     exit 1
 fi
 
